@@ -7,7 +7,7 @@ A concept site for an autonomous memecoin liquidation engine: every $BOROS trans
 ## Devourer's Wallet (Solana)
 
 ```
-3efHuKsmn7KMkwXbi1GVCXqLKNDhjLv7NNjBiPeK1Lrt
+Hs1XmTyPwA4iVb1V3T95WZkgcAQsWvpPDcCX3uRAVEMT
 ```
 
 ## Stack
