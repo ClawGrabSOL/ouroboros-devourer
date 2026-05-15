@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>$OUROBOROS // devourer.sol — autonomous memecoin liquidation engine</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Cinzel:wght@700;900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0e1a;
+    --bg-panel: #0f1525;
+    --bg-deep: #050811;
+    --grid: rgba(59,176,214,0.08);
+    --fg: #d4c8a0;
+    --fg-dim: #7a7458;
+    --gold: #E8A323;
+    --gold-bright: #F0BE4A;
+    --navy-line: #1B2545;
+    --turquoise: #3BB0D6;
+    --green: #06ffa5;
+    --red: #ff4757;
+    --blood: #C94A4A;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+    background: var(--bg);
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 40px 40px;
+    color: var(--fg);
+    min-height: 100vh;
+    line-height: 1.5;
+    font-size: 14px;
+    overflow-x: hidden;
+  }
+  /* CRT scanlines */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0,0,0,0) 0px,
+      rgba(0,0,0,0) 2px,
+      rgba(0,0,0,0.15) 3px,
+      rgba(0,0,0,0) 4px
+    );
+    pointer-events: none;
+    z-index: 100;
+  }
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(ellipse at center, transparent 0%, rgba(0,0,0,0.5) 100%);
+    pointer-events: none;
+    z-index: 99;
+  }
+
+  .container { max-width: 1200px; margin: 0 auto; padding: 24px; position: relative; z-index: 1; }
+
+  /* TOP BAR */
+  .topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 20px;
+    background: var(--bg-deep);
+    border: 1px solid var(--turquoise);
+    border-radius: 4px;
+    margin-bottom: 24px;
+    font-size: 12px;
+  }
+  .topbar .left { color: var(--turquoise); }
+  .topbar .right { color: var(--fg-dim); }
+  .blink { animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* HERO */
+  header {
+    text-align: center;
+    padding: 30px 0;
+    border-bottom: 1px dashed var(--navy-line);
+    margin-bottom: 30px;
+  }
+  .snake-img {
+    width: min(40vw, 220px);
+    height: auto;
+    filter: drop-shadow(0 0 30px rgba(232,163,35,0.4)) drop-shadow(0 0 60px rgba(59,176,214,0.2));
+    animation: hover 4s ease-in-out infinite;
+  }
+  @keyframes hover {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    50% { transform: translateY(-8px) rotate(2deg); }
+  }
+  h1 {
+    font-family: 'Cinzel', serif;
+    font-weight: 900;
+    font-size: clamp(40px, 8vw, 84px);
+    color: var(--gold);
+    letter-spacing: 0.08em;
+    margin: 20px 0 6px;
+    text-shadow: 0 0 20px rgba(232,163,35,0.5);
+  }
+  .subtitle {
+    color: var(--turquoise);
+    font-size: 14px;
+    letter-spacing: 0.3em;
+    margin-bottom: 20px;
+  }
+  .tagline {
+    color: var(--fg);
+    font-size: 16px;
+    max-width: 700px;
+    margin: 0 auto 30px;
+  }
+  .cta {
+    display: inline-block;
+    background: var(--bg-deep);
+    color: var(--gold);
+    padding: 14px 36px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-decoration: none;
+    border: 1px solid var(--gold);
+    text-transform: uppercase;
+    transition: all 0.15s;
+    cursor: pointer;
+  }
+  .cta:hover { background: var(--gold); color: var(--bg-deep); box-shadow: 0 0 30px rgba(232,163,35,0.6); }
+  .cta::before { content: '> '; }
+  .cta::after { content: ' _'; animation: blink 1s steps(2) infinite; }
+
+  /* PANEL (terminal window) */
+  .panel {
+    background: var(--bg-panel);
+    border: 1px solid var(--navy-line);
+    border-radius: 4px;
+    margin: 20px 0;
+    overflow: hidden;
+    box-shadow: 0 0 0 1px rgba(59,176,214,0.1), 0 8px 24px rgba(0,0,0,0.4);
+  }
+  .panel-head {
+    background: var(--bg-deep);
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--navy-line);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--fg-dim);
+  }
+  .panel-head .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .dot.r { background: #ff5f56; }
+  .dot.y { background: #ffbd2e; }
+  .dot.g { background: #27c93f; }
+  .panel-title { margin-left: 10px; color: var(--turquoise); letter-spacing: 0.1em; }
+  .panel-body { padding: 24px; }
+
+  h2 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 18px;
+    color: var(--gold);
+    margin-bottom: 16px;
+    letter-spacing: 0.1em;
+  }
+  h2::before { content: '## '; color: var(--turquoise); }
+
+  p { margin-bottom: 12px; color: var(--fg); }
+  .muted { color: var(--fg-dim); }
+  .accent { color: var(--turquoise); }
+  .warn { color: var(--gold-bright); }
+  .ok { color: var(--green); }
+  .err { color: var(--red); }
+  code { color: var(--turquoise); background: var(--bg-deep); padding: 2px 6px; border-radius: 2px; }
+
+  /* BOT TERMINAL */
+  .bot-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    background: var(--bg-deep);
+    border: 1px solid var(--navy-line);
+  }
+  @media (max-width: 800px) { .bot-grid { grid-template-columns: 1fr; } }
+
+  .ascii-stage {
+    padding: 20px;
+    border-right: 1px solid var(--navy-line);
+    background: #000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 320px;
+  }
+  @media (max-width: 800px) { .ascii-stage { border-right: none; border-bottom: 1px solid var(--navy-line); } }
+
+  .ascii {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.05;
+    color: var(--green);
+    white-space: pre;
+    text-shadow: 0 0 8px rgba(6,255,165,0.6), 0 0 16px rgba(6,255,165,0.3);
+    user-select: none;
+  }
+
+  .console {
+    padding: 20px;
+    background: var(--bg-deep);
+    min-height: 320px;
+    max-height: 400px;
+    overflow-y: auto;
+    scroll-behavior: smooth;
+  }
+  .console::-webkit-scrollbar { width: 6px; }
+  .console::-webkit-scrollbar-thumb { background: var(--navy-line); }
+
+  .log-line {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    margin-bottom: 4px;
+    opacity: 0;
+    animation: fadein 0.3s forwards;
+  }
+  @keyframes fadein { to { opacity: 1; } }
+  .log-line .ts { color: var(--fg-dim); margin-right: 8px; }
+  .log-line .tag { color: var(--turquoise); margin-right: 6px; }
+  .log-line.ok .tag { color: var(--green); }
+  .log-line.burn .tag { color: var(--red); }
+  .log-line.scan .tag { color: var(--gold); }
+
+  /* STATS GRID */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+  }
+  .stat {
+    background: var(--bg-deep);
+    border: 1px solid var(--navy-line);
+    padding: 18px;
+    border-radius: 3px;
+    position: relative;
+  }
+  .stat .lbl {
+    color: var(--fg-dim);
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .stat .val {
+    color: var(--gold);
+    font-size: 28px;
+    font-weight: 800;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .stat .sub { color: var(--turquoise); font-size: 11px; margin-top: 4px; }
+
+  /* WALLET BOX */
+  .wallet-box {
+    background: var(--bg-deep);
+    border: 1px solid var(--gold);
+    padding: 20px;
+    margin: 16px 0;
+  }
+  .wallet-box .row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .wallet-box .badge { background: var(--gold); color: var(--bg-deep); padding: 3px 10px; font-size: 11px; font-weight: 700; letter-spacing: 0.15em; }
+  .wallet-box .status { color: var(--green); font-size: 12px; }
+  .wallet-addr {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: clamp(11px, 1.8vw, 15px);
+    color: var(--gold-bright);
+    word-break: break-all;
+    padding: 12px;
+    background: #000;
+    border: 1px dashed var(--turquoise);
+    cursor: pointer;
+    user-select: all;
+  }
+  .wallet-addr:hover { background: #050811; box-shadow: inset 0 0 20px rgba(232,163,35,0.15); }
+  .wallet-foot {
+    display: flex;
+    justify-content: space-between;
+    color: var(--fg-dim);
+    font-size: 11px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .copied { color: var(--green); font-size: 12px; min-height: 16px; margin-top: 6px; }
+
+  /* PROGRESS BARS */
+  .bar {
+    height: 16px;
+    background: var(--bg-deep);
+    border: 1px solid var(--navy-line);
+    position: relative;
+    margin: 8px 0 4px;
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--turquoise), var(--gold));
+    width: 0%;
+    transition: width 0.6s;
+  }
+  .bar-fill::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(45deg, transparent 0 6px, rgba(0,0,0,0.15) 6px 12px);
+    animation: stripes 1s linear infinite;
+  }
+  @keyframes stripes { to { background-position: 24px 0; } }
+
+  /* TARGETS TABLE */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 10px 8px; text-align: left; border-bottom: 1px solid var(--navy-line); }
+  th { color: var(--turquoise); font-weight: 500; font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase; }
+  td.tkr { color: var(--gold); font-weight: 700; }
+  td.status { color: var(--red); }
+  td.status.live { color: var(--green); }
+
+  /* TOKENOMICS */
+  .tokenomics { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
+  .tk {
+    background: var(--bg-deep);
+    border: 1px solid var(--navy-line);
+    padding: 18px;
+    text-align: center;
+  }
+  .tk .n { font-size: 32px; color: var(--gold); font-weight: 800; }
+  .tk .l { font-size: 11px; color: var(--fg-dim); letter-spacing: 0.15em; text-transform: uppercase; margin-top: 6px; }
+
+  /* ROADMAP */
+  .roadmap-item {
+    background: var(--bg-deep);
+    border-left: 3px solid var(--gold);
+    padding: 16px 20px;
+    margin: 10px 0;
+    font-size: 13px;
+  }
+  .roadmap-item strong {
+    color: var(--turquoise);
+    display: block;
+    font-size: 13px;
+    margin-bottom: 6px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+  .roadmap-item.done strong { color: var(--green); }
+  .roadmap-item.done strong::before { content: '[✓] '; }
+  .roadmap-item.live strong::before { content: '[~] '; }
+  .roadmap-item.next strong::before { content: '[ ] '; color: var(--fg-dim); }
+
+  ul.steps { list-style: none; padding: 0; }
+  ul.steps li { padding: 6px 0 6px 24px; position: relative; color: var(--fg); }
+  ul.steps li::before { content: '$'; position: absolute; left: 0; color: var(--turquoise); }
+
+  /* COUNTER */
+  .counter {
+    text-align: center;
+    background: var(--bg-deep);
+    border: 1px solid var(--red);
+    padding: 24px;
+    margin: 16px 0;
+  }
+  .counter .big {
+    font-size: clamp(36px, 8vw, 72px);
+    color: var(--red);
+    font-weight: 900;
+    font-family: 'JetBrains Mono', monospace;
+    text-shadow: 0 0 25px rgba(255,71,87,0.6);
+  }
+  .counter .lbl { color: var(--fg-dim); letter-spacing: 0.25em; font-size: 11px; text-transform: uppercase; }
+
+  footer { text-align: center; padding: 40px 20px; color: var(--fg-dim); font-size: 12px; }
+  footer .glyph { color: var(--gold); font-size: 24px; display: block; margin-bottom: 12px; }
+
+  .disclaimer {
+    background: rgba(255,71,87,0.05);
+    border: 1px dashed var(--red);
+    padding: 14px;
+    margin: 24px 0;
+    color: var(--fg-dim);
+    font-size: 12px;
+  }
+  .disclaimer::before { content: '[!] '; color: var(--red); font-weight: 700; }
+</style>
+</head>
+<body>
+  <div class="container">
+
+    <!-- TOP BAR -->
+    <div class="topbar">
+      <div class="left">[ OUROBOROS // devourer.sol v1.3.7 ]</div>
+      <div class="right">
+        <span class="ok">● ONLINE</span> &nbsp;|&nbsp;
+        <span id="uptime">uptime 00:00:00</span> &nbsp;|&nbsp;
+        <span class="blink">▎</span>
+      </div>
+    </div>
+
+    <header>
+      <img src="snake.webp" alt="Ouroboros" class="snake-img">
+      <h1>$OUROBOROS</h1>
+      <div class="subtitle">// AUTONOMOUS MEMECOIN LIQUIDATION ENGINE //</div>
+      <p class="tagline">
+        A self-executing on-chain bot that taxes every $BOROS trade, sweeps the open market for rival memecoins, and burns them to <code>0x0</code>. Forever.
+      </p>
+      <a href="#buy" class="cta">init buy</a>
+    </header>
+
+    <!-- LIVE BOT -->
+    <div class="panel">
+      <div class="panel-head">
+        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+        <span class="panel-title">devourer@ouroboros ~ live</span>
+      </div>
+      <div class="panel-body" style="padding:0;">
+        <div class="bot-grid">
+          <div class="ascii-stage">
+            <pre class="ascii" id="ascii"></pre>
+          </div>
+          <div class="console" id="console"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STATS GRID -->
+    <div class="panel">
+      <div class="panel-head">
+        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+        <span class="panel-title">devourer@ouroboros ~ metrics</span>
+      </div>
+      <div class="panel-body">
+        <div class="stats">
+          <div class="stat"><div class="lbl">// rivals burned</div><div class="val" id="burned">0</div><div class="sub">cumulative</div></div>
+          <div class="stat"><div class="lbl">// $ liquidated</div><div class="val" id="liquidated">$0</div><div class="sub">total volume</div></div>
+          <div class="stat"><div class="lbl">// tx executed</div><div class="val" id="txs">0</div><div class="sub">on-chain</div></div>
+          <div class="stat"><div class="lbl">// hunt cycle</div><div class="val" id="cycle">∞</div><div class="sub">eternal</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- WALLET -->
+    <div class="panel">
+      <div class="panel-head">
+        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+        <span class="panel-title">devourer@ouroboros ~ wallet.devourer</span>
+      </div>
+      <div class="panel-body">
+        <h2>The Devourer's Wallet</h2>
+        <p class="muted">// the on-chain address that executes every buy &amp; burn. fully transparent. fully autonomous. //</p>
+        <div class="wallet-box">
+          <div class="row">
+            <span class="badge">SOLANA</span>
+            <span class="status">● operational • last tx 4s ago</span>
+          </div>
+          <div class="wallet-addr" id="wallet" title="click to copy">3efHuKsmn7KMkwXbi1GVCXqLKNDhjLv7NNjBiPeK1Lrt</div>
+          <div class="copied" id="copied">&nbsp;</div>
+          <div class="wallet-foot">
+            <span>tax_in: 5% of every $BOROS tx</span>
+            <span>burn_out: 0x0000…0000</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- COUNTER -->
+    <div class="counter">
+      <div class="big" id="eaten">0</div>
+      <div class="lbl">rival memecoin tokens incinerated</div>
+    </div>
+
+    <!-- TARGETS -->
+    <div class="panel">
+      <div class="panel-head">
+        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+        <span class="panel-title">devourer@ouroboros ~ targets.json</span>
+      </div>
+      <div class="panel-body">
+        <h2>Active Hit List</h2>
+        <table>
+          <thead><tr><th>ticker</th><th>queue_pos</th><th>last_burn</th><th>status</th></tr></thead>
+          <tbody id="targets">
+            <tr><td class="tkr">$PEPE</td><td>1</td><td>2s ago</td><td class="status live">HUNTING</td></tr>
+            <tr><td class="tkr">$DOGE</td><td>2</td><td>14s ago</td><td class="status live">HUNTING</td></tr>
+            <tr><td class="tkr">$SHIB</td><td>3</td><td>41s ago</td><td class="status live">QUEUED</td></tr>
+            <tr><td class="tkr">$WIF</td><td>4</td><td>1m ago</td><td class="status live">QUEUED</td></tr>
+            <tr><td class="tkr">$BONK</td><td>5</td><td>2m ago</td><td class="status live">QUEUED</td></tr>
+            <tr><td class="tkr">$FLOKI</td><td>6</td><td>3m ago</td><td class="status live">QUEUED</td></tr>
+            <tr><td class="tkr">$BRETT</td><td>7</td><td>4m ago</td><td class="status live">QUEUED</td></tr>
+            <tr><td class="tkr">$POPCAT</td><td>8</td><td>5m ago</td><td class="status live">QUEUED</td></tr>
+            <tr><td class="tkr">$MOG</td><td>9</td><td>7m ago</td><td class="status live">QUEUED</td></tr>
+            <tr><td class="tkr">$MEW</td><td>10</td><td>8m ago</td><td class="status live">QUEUED</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- TOKENOMICS -->
+    <div class="panel">
+      <div class="panel-head">
+        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+        <span class="panel-title">devourer@ouroboros ~ tokenomics.cfg</span>
+      </div>
+      <div class="panel-body">
+        <h2>Tokenomics</h2>
+        <div class="tokenomics">
+          <div class="tk"><div class="n">5%</div><div class="l">devour tax</div></div>
+          <div class="tk"><div class="n">2%</div><div class="l">liquidity</div></div>
+          <div class="tk"><div class="n">2%</div><div class="l">reflections</div></div>
+          <div class="tk"><div class="n">1%</div><div class="l">treasury</div></div>
+          <div class="tk"><div class="n">1B</div><div class="l">total supply</div></div>
+          <div class="tk"><div class="n">0%</div><div class="l">team alloc</div></div>
+        </div>
+        <p class="muted" style="margin-top: 20px;">// supply_curve: deflationary • renounce_authority: true • mint_authority: null //</p>
+        <div style="margin-top: 16px;">
+          <div class="muted" style="font-size: 12px; display:flex; justify-content:space-between;">
+            <span>devour_progress: hunting $PEPE</span>
+            <span id="progPct">0%</span>
+          </div>
+          <div class="bar"><div class="bar-fill" id="prog"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ROADMAP -->
+    <div class="panel">
+      <div class="panel-head">
+        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+        <span class="panel-title">devourer@ouroboros ~ roadmap.yml</span>
+      </div>
+      <div class="panel-body">
+        <h2>The Cycle</h2>
+        <div class="roadmap-item done"><strong>phase_1 :: awakening</strong>token deployed • lp locked • devourer wallet armed</div>
+        <div class="roadmap-item live"><strong>phase_2 :: first_feast</strong>auto-buyback contract live • first rival sacrificed</div>
+        <div class="roadmap-item next"><strong>phase_3 :: feeding_frenzy</strong>cex listings • daily burn ceremonies • influencer alliances</div>
+        <div class="roadmap-item next"><strong>phase_4 :: eternal_coil</strong>$boros == apex memecoin • cycle complete</div>
+      </div>
+    </div>
+
+    <!-- BUY -->
+    <div class="panel" id="buy">
+      <div class="panel-head">
+        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+        <span class="panel-title">devourer@ouroboros ~ ./buy.sh</span>
+      </div>
+      <div class="panel-body">
+        <h2>How To Enter The Cycle</h2>
+        <ul class="steps">
+          <li>install solana wallet [phantom / solflare / hardware]</li>
+          <li>fund with SOL</li>
+          <li>swap → <code>$BOROS</code> on jupiter / raydium</li>
+          <li>watch the devourer hunt rivals in real time</li>
+          <li>hold • the serpent rewards the patient</li>
+        </ul>
+        <div style="text-align:center; margin-top: 24px;">
+          <a href="#" class="cta">execute buy</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="disclaimer">
+      concept/parody site. $OUROBOROS is presented as a memetic experiment. memecoins carry extreme risk. dyor. not financial advice.
+    </div>
+
+    <footer>
+      <span class="glyph">⚭</span>
+      // as above, so below // as the snake eats, so shall we //
+    </footer>
+  </div>
+
+<script>
+  // ===== ASCII SNAKE ANIMATION =====
+  const frames = [
+`        .--.       .--.
+       /    \\.---./    \\
+      / .-. ;\\   /; .-. \\
+     | (   /  '-'  \\   ) |
+      \\ '-'         '-' /
+       '.   ___ ___   .'
+         '-/   V   \\-'
+          |  o   o  |
+           \\   ▼   /
+            '. ─ .'
+              '-'
+   [ scanning mempool... ]`,
+
+`        .--.       .--.
+       /    \\.---./    \\
+      / .-. ;\\   /; .-. \\
+     | (   /  '~'  \\   ) |
+      \\ '-'         '-' /
+       '.   ___ ___   .'
+         '-/   V   \\-'
+          |  ◉   ◉  |
+           \\   ▲   /
+            '. ─ .'
+              '-'
+  [ target acquired: $PEPE ]`,
+
+`        .--.       .--.
+       /    \\.---./    \\
+      / .-. ;\\   /; .-. \\
+     | (   /  '*'  \\   ) |
+      \\ '-'         '-' /
+       '.   ___ ___   .'
+         '-/   V   \\-'
+          |  ●   ●  |
+           \\   ▼   /
+            '. ╳ .'
+              '-'
+   [ swap executing...  ]`,
+
+`        .--.       .--.
+       /    \\.---./    \\
+      / .-. ;\\   /; .-. \\
+     | (   /  '!'  \\   ) |
+      \\ '-'         '-' /
+       '.   ___ ___   .'
+         '-/   V   \\-'
+          |  ◎   ◎  |
+           \\  ░░░  /
+            '. ▼ .'
+              '-'
+   [ tokens received    ]`,
+
+`        .--.       .--.
+       /    \\.---./    \\
+      / .-. ;\\   /; .-. \\
+     | (   /  '#'  \\   ) |
+      \\ '-'         '-' /
+       '.   ___ ___   .'
+         '-/   V   \\-'
+          |  ✦   ✦  |
+           \\  ▓▓▓  /
+            '. ◢◣ .'
+              '-'
+   [ BURN → 0x0000...   ]`,
+
+`        .--.       .--.
+       /    \\.---./    \\
+      / .-. ;\\   /; .-. \\
+     | (   /  '~'  \\   ) |
+      \\ '-'    🔥    '-' /
+       '.   ___ ___   .'
+         '-/   V   \\-'
+          |  ◉   ◉  |
+           \\   ✓   /
+            '. ▲ .'
+              '-'
+   [ rival incinerated  ]`,
+
+`        .--.       .--.
+       /    \\.---./    \\
+      / .-. ;\\   /; .-. \\
+     | (   /  '-'  \\   ) |
+      \\ '-'         '-' /
+       '.   ___ ___   .'
+         '-/   V   \\-'
+          |  o   o  |
+           \\   ─   /
+            '. . .'
+              '-'
+   [ cycle restarting   ]`,
+  ];
+
+  let fi = 0;
+  const asciiEl = document.getElementById('ascii');
+  setInterval(() => {
+    asciiEl.textContent = frames[fi % frames.length];
+    fi++;
+  }, 700);
+  asciiEl.textContent = frames[0];
+
+  // ===== CONSOLE LOG STREAM =====
+  const consoleEl = document.getElementById('console');
+  const TOKENS = ['$PEPE','$DOGE','$SHIB','$WIF','$BONK','$FLOKI','$BRETT','$POPCAT','$MOG','$MEW','$TURBO','$NEIRO'];
+  const pick = () => TOKENS[Math.floor(Math.random()*TOKENS.length)];
+  const rand = (n) => Math.floor(Math.random()*n);
+  const hash = () => Array.from({length:8},()=>'0123456789abcdef'[rand(16)]).join('');
+  const amt = () => (Math.random()*5+0.1).toFixed(3);
+
+  function ts() {
+    const d = new Date();
+    return d.toTimeString().slice(0,8);
+  }
+
+  function log(type, msg) {
+    const line = document.createElement('div');
+    line.className = 'log-line ' + type;
+    const tagMap = { info:'[INFO]', scan:'[SCAN]', ok:'[OK]  ', burn:'[BURN]', err:'[ERR] ' };
+    line.innerHTML = `<span class="ts">${ts()}</span><span class="tag">${tagMap[type]||'[··]  '}</span>${msg}`;
+    consoleEl.appendChild(line);
+    while (consoleEl.children.length > 60) consoleEl.removeChild(consoleEl.firstChild);
+    consoleEl.scrollTop = consoleEl.scrollHeight;
+  }
+
+  // initial seed
+  log('info', 'devourer.sol booting...');
+  log('info', 'connecting to solana mainnet-beta');
+  log('ok',   'wallet 3efHuK...K1Lrt connected');
+  log('info', 'loading targets.json (12 entries)');
+  log('ok',   'autonomous mode engaged');
+
+  // Simulate hunt cycle
+  let burnedCount = 666420;
+  let liquidatedUsd = 4287340;
+  let txCount = 18247;
+
+  function hunt() {
+    const tok = pick();
+    const a = amt();
+    const sol = (Math.random()*0.8+0.05).toFixed(3);
+    const h = hash();
+    const burned = (Math.random()*1.5e9+1e6).toFixed(0);
+
+    setTimeout(()=>log('scan', `scanning mempool for ${tok} liquidity...`), 0);
+    setTimeout(()=>log('info', `target locked: ${tok} • route via jupiter`), 800);
+    setTimeout(()=>log('info', `submitting swap: ${sol} SOL → ${tok} (tx: 0x${h}...)`), 1700);
+    setTimeout(()=>log('ok',   `swap confirmed • received ${Number(burned).toLocaleString()} ${tok}`), 2600);
+    setTimeout(()=>log('burn', `BURN → ${Number(burned).toLocaleString()} ${tok} sent to 0x0`), 3400);
+    setTimeout(()=>{
+      log('ok', `${tok} supply reduced • cycle complete ✓`);
+      burnedCount += Number(burned);
+      liquidatedUsd += Math.floor(Math.random()*2000+500);
+      txCount += 1;
+      updateStats();
+    }, 4200);
+  }
+  hunt();
+  setInterval(hunt, 5500);
+
+  // ===== STATS =====
+  const burnedEl = document.getElementById('burned');
+  const liqEl = document.getElementById('liquidated');
+  const txEl = document.getElementById('txs');
+  const eatenEl = document.getElementById('eaten');
+
+  function fmtBig(n) {
+    if (n >= 1e9) return (n/1e9).toFixed(2)+'B';
+    if (n >= 1e6) return (n/1e6).toFixed(2)+'M';
+    if (n >= 1e3) return (n/1e3).toFixed(1)+'K';
+    return n.toString();
+  }
+
+  function updateStats() {
+    burnedEl.textContent = fmtBig(burnedCount);
+    liqEl.textContent = '$' + liquidatedUsd.toLocaleString();
+    txEl.textContent = txCount.toLocaleString();
+    eatenEl.textContent = burnedCount.toLocaleString();
+  }
+  updateStats();
+
+  // small constant tick on counter
+  setInterval(()=>{
+    burnedCount += rand(140)+20;
+    liquidatedUsd += rand(40);
+    updateStats();
+  }, 1100);
+
+  // ===== PROGRESS BAR =====
+  const prog = document.getElementById('prog');
+  const progPct = document.getElementById('progPct');
+  let p = 0;
+  setInterval(()=>{
+    p = (p + 7 + rand(6)) % 100;
+    prog.style.width = p + '%';
+    progPct.textContent = p + '%';
+  }, 600);
+
+  // ===== UPTIME =====
+  const uptimeEl = document.getElementById('uptime');
+  const t0 = Date.now() - (3*3600+27*60+14)*1000; // fake "running for 3h"
+  setInterval(()=>{
+    const s = Math.floor((Date.now()-t0)/1000);
+    const hh = String(Math.floor(s/3600)).padStart(2,'0');
+    const mm = String(Math.floor((s%3600)/60)).padStart(2,'0');
+    const ss = String(s%60).padStart(2,'0');
+    uptimeEl.textContent = `uptime ${hh}:${mm}:${ss}`;
+  }, 1000);
+
+  // ===== WALLET COPY =====
+  const wallet = document.getElementById('wallet');
+  const copied = document.getElementById('copied');
+  wallet.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(wallet.textContent.trim());
+      copied.textContent = '✓ copied to clipboard';
+      setTimeout(()=>copied.innerHTML='&nbsp;', 2000);
+    } catch(e) { copied.textContent = '(select & copy manually)'; }
+  });
+
+  // ===== ROTATE TARGETS QUEUE =====
+  setInterval(()=>{
+    const rows = document.querySelectorAll('#targets tr');
+    rows.forEach((r,i)=>{
+      const tdAgo = r.children[2];
+      const secs = rand(180)+1;
+      tdAgo.textContent = secs < 60 ? secs+'s ago' : Math.floor(secs/60)+'m ago';
+    });
+  }, 3500);
+</script>
+</body>
+</html>
